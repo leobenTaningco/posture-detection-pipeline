@@ -1,0 +1,3 @@
+dataset/augmented/*
+dataset/raw/*
+dataset/sorted/*

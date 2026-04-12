@@ -246,8 +246,8 @@ def chart_roc_curves(models_dict, X_test, y_test):
 
     for (name, clf), col in zip(models_dict.items(), PALETTE_LIST):
         y_prob = (clf.predict_proba(X_test)[:, 1]
-                  if hasattr(clf, "predict_proba")
-                  else clf.decision_function(X_test))
+                if hasattr(clf, "predict_proba")
+                else clf.decision_function(X_test))
         fpr, tpr, _ = roc_curve(y_test, y_prob)
         roc_val     = auc(fpr, tpr)
         ax.plot(fpr, tpr, color=col, lw=2, label=f"{name}  (AUC={roc_val:.3f})")

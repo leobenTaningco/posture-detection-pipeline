@@ -1,11 +1,11 @@
 """
-Step 2 — MediaPipe Feature Extraction
-Runs MediaPipe Pose on every augmented image and writes a CSV
-of biomechanical features used by RF/MLP downstream.
+Step 2 — MediaPipe Feature Extraction (Side-Aware Version)
 
-Notes:
-- Keeps 'side' column as placeholder ('N/A') to maintain pipeline compatibility.
-- No rotation or camera tilt correction.
+Improvements:
+- Detects LEFT vs RIGHT facing direction
+- Selects correct body side dynamically
+- Fixes right-side bias issue in original pipeline
+- Keeps backward compatibility with training CSV format
 """
 
 import cv2
@@ -20,15 +20,13 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import (
     AUG_DIR, FEATURES_CSV,
-    MP_MODEL_COMPLEXITY,
-    MP_MIN_DETECTION_CONF, MP_MIN_TRACKING_CONF,
     VISIBILITY_THRESHOLD,
     LABEL_GOOD, LABEL_BAD,
 )
 
 SUPPORTED = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-MODEL_PATH="models/pose_landmarker_heavy.task"
+MODEL_PATH = "models/pose_landmarker_heavy.task"
 
 # ── Geometry helpers ────────────────────────────────────────────
 
@@ -61,25 +59,26 @@ def upscale(img, factor=1.5):
     h, w = img.shape[:2]
     return cv2.resize(img, (int(w * factor), int(h * factor)), interpolation=cv2.INTER_CUBIC)
 
-# ── Sanity check ────────────────────────────────────────────────
+# ── Label helper ───────────────────────────────────────────────
 
-def is_valid_keypoints(kp):
-    if 'ear' in kp and 'shoulder' in kp:
-        if kp['ear'][1] > kp['shoulder'][1]:
-            return False
-    if 'shoulder' in kp and 'hip' in kp:
-        if kp['hip'][1] < kp['shoulder'][1]:
-            return False
-        if (kp['hip'][1] - kp['shoulder'][1]) < 10:
-            return False
-    return True
+def label_from_name(name: str):
+    lower = name.lower()
+    if "goodposture" in lower:
+        return LABEL_GOOD
+    if "badposture" in lower:
+        return LABEL_BAD
+    return None
 
-# ── Keypoint extraction ────────────────────────────────────────
+# ── Keypoint extraction + SIDE DETECTION ───────────────────────
 
 def get_keypoints(image_rgb, landmarker):
     h, w = image_rgb.shape[:2]
 
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(image_rgb))
+    mp_image = mp.Image(
+        image_format=mp.ImageFormat.SRGB,
+        data=np.ascontiguousarray(image_rgb)
+    )
+
     results = landmarker.detect(mp_image)
 
     if not results.pose_landmarks:
@@ -91,62 +90,89 @@ def get_keypoints(image_rgb, landmarker):
         lm = lms[idx]
         if lm.visibility < VISIBILITY_THRESHOLD:
             return None
-        return [lm.x * w, lm.y * h]
+        return np.array([lm.x * w, lm.y * h]), lm.visibility
 
-    raw = {
-        "ear": pt(7),
-        "shoulder": pt(11),
-        "hip": pt(23),
+    # ── LEFT SIDE ─────────────────────────────
+    left_shoulder = pt(11)
+    left_ear = pt(7)
+    left_hip = pt(23)
+
+    # ── RIGHT SIDE ────────────────────────────
+    right_shoulder = pt(12)
+    right_ear = pt(8)
+    right_hip = pt(24)
+
+    # helper to check full validity
+    def valid(points):
+        return all(p is not None for p in points)
+
+    # compute visibility scores
+    def score(points):
+        vals = [p[1] for p in points if p is not None]
+        return sum(vals) if vals else 0
+
+    left_points  = [left_ear, left_shoulder, left_hip]
+    right_points = [right_ear, right_shoulder, right_hip]
+
+    left_valid  = valid(left_points)
+    right_valid = valid(right_points)
+
+    left_score  = score(left_points)
+    right_score = score(right_points)
+
+    # ── selection logic (SAFE) ─────────────────────
+    if left_valid and right_valid:
+        # both sides valid → pick best
+        if left_score >= right_score:
+            side = "LEFT"
+            chosen = left_points
+        else:
+            side = "RIGHT"
+            chosen = right_points
+
+    elif left_valid:
+        side = "LEFT"
+        chosen = left_points
+
+    elif right_valid:
+        side = "RIGHT"
+        chosen = right_points
+
+    else:
+        return None  # no usable pose
+
+    kp = {
+        "ear": chosen[0][0],
+        "shoulder": chosen[1][0],
+        "hip": chosen[2][0],
     }
 
-    kp = {k: v for k, v in raw.items() if v is not None}
-
-    if len(kp) < 3 or not is_valid_keypoints(kp):
-        return None
-
-    # Placeholder side so pipeline doesn't break
-    side = "N/A"
     return kp, side
-
 # ── Feature engineering ────────────────────────────────────────
 
 def extract_features(kp, img_h, img_w):
-    ear = np.array(kp["ear"])
-    shoulder = np.array(kp["shoulder"])
-    hip = np.array(kp["hip"])
+    ear = kp["ear"]
+    shoulder = kp["shoulder"]
+    hip = kp["hip"]
 
-    neck_inc  = find_inclination(shoulder[0], shoulder[1], ear[0], ear[1])
-    torso_inc = find_inclination(hip[0], hip[1], shoulder[0], shoulder[1])
-    sh_dist   = np.linalg.norm(shoulder - hip) + 1e-6
-    es_dist   = np.linalg.norm(ear - shoulder)
-    neck_ratio = es_dist / sh_dist
-    ear_shoulder_y_diff = (shoulder[1] - ear[1]) / img_h
-    torso_lean = (shoulder[0] - hip[0]) / img_w
-    head_forward_angle  = three_point_angle(ear, shoulder, hip)
-    shoulder_hip_angle  = find_inclination(hip[0], hip[1], shoulder[0], shoulder[1])
+    neck_inc = find_inclination(*shoulder, *ear)
+    torso_inc = find_inclination(*hip, *shoulder)
+
+    sh_dist = np.linalg.norm(shoulder - hip) + 1e-6
+    es_dist = np.linalg.norm(ear - shoulder)
 
     return {
-        "neck_inclination":    neck_inc,
-        "torso_inclination":   torso_inc,
-        "neck_ratio":          neck_ratio,
-        "ear_shoulder_y_diff": ear_shoulder_y_diff,
-        "torso_lean":          torso_lean,
-        "head_forward_angle":  head_forward_angle,
-        "shoulder_hip_angle":  shoulder_hip_angle,
-        "neck_torso_ratio":    neck_inc / (torso_inc + 1e-6),
-        "ear_hip_x_dist":      abs(ear[0] - hip[0]) / img_w,
-        "torso_height_ratio":  (hip[1] - shoulder[1]) / img_h,
+        "neck_inclination": neck_inc,
+        "torso_inclination": torso_inc,
+        "neck_ratio": es_dist / sh_dist,
+        "ear_shoulder_y_diff": (shoulder[1] - ear[1]) / img_h,
+        "torso_lean": (shoulder[0] - hip[0]) / img_w,
+        "head_forward_angle": three_point_angle(ear, shoulder, hip),
+        "shoulder_hip_angle": find_inclination(hip[0], hip[1], shoulder[0], shoulder[1]),
+        "neck_torso_ratio": neck_inc / (torso_inc + 1e-6),
+        "ear_hip_x_dist": abs(ear[0] - hip[0]) / img_w,
+        "torso_height_ratio": (hip[1] - shoulder[1]) / img_h,
     }
-
-# ── Label helper ───────────────────────────────────────────────
-
-def label_from_name(name: str):
-    lower = name.lower()
-    if "goodposture" in lower:
-        return LABEL_GOOD
-    if "badposture" in lower:
-        return LABEL_BAD
-    return None
 
 # ── Main runner ───────────────────────────────────────────────
 
@@ -174,9 +200,8 @@ def run(source_dir: Path = AUG_DIR):
     records = []
     skipped = 0
     no_label = 0
-    passed = 0
 
-    for img_path in tqdm(images, desc="  Extracting", unit="img"):
+    for img_path in tqdm(images, desc="Extracting", unit="img"):
         label = label_from_name(img_path.name)
         if label is None:
             no_label += 1
@@ -197,32 +222,26 @@ def run(source_dir: Path = AUG_DIR):
         result = get_keypoints(rgb, landmarker)
         if result is None:
             skipped += 1
-            print(f"[SKIP {skipped}] {img_path.name}")
             continue
 
         kp, side = result
-        required = {"ear", "shoulder", "hip"}
-        if not required.issubset(kp):
-            skipped += 1
-            continue
 
         feats = extract_features(kp, h, w)
         feats["label"] = label
         feats["filename"] = img_path.name
         feats["side"] = side
+
         records.append(feats)
-        passed += 1
 
     df = pd.DataFrame(records)
     df.to_csv(FEATURES_CSV, index=False)
 
-    print(f"  ✅ Feature extraction done.")
-    print(f"     Records : {len(df)}")
-    print(f"     Skipped : {skipped}")
-    if no_label:
-        print(f"     No label: {no_label}")
-    print(f"     Saved   : {FEATURES_CSV}")
-    print(f"\n  Label distribution:\n{df['label'].value_counts().to_string()}")
+    print("\n✅ Feature extraction done.")
+    print(f"Records : {len(df)}")
+    print(f"Skipped : {skipped}")
+    print(f"Saved   : {FEATURES_CSV}")
+    print("\nSide distribution:")
+    print(df["side"].value_counts())
 
 if __name__ == "__main__":
     run()

@@ -70,11 +70,11 @@ def load_features():
 
 def load_models():
     return {
-        "Random Forest":     joblib.load(MODELS_DIR / "rf_pipeline.joblib"),
-        "MLP":               joblib.load(MODELS_DIR / "mlp_pipeline.joblib"),
-        "Gradient Boosting": joblib.load(MODELS_DIR / "gbm_pipeline.joblib"),
-        "RF + MLP":          joblib.load(MODELS_DIR / "rf_mlp_pipeline.joblib"),
-        "RF + MLP + GBM":    joblib.load(MODELS_DIR / "rf_mlp_gbm_pipeline.joblib"),
+        "Random Forest":     joblib.load(MODELS_DIR / "rf.joblib"),
+        "MLP":               joblib.load(MODELS_DIR / "mlp.joblib"),
+        "Gradient Boosting": joblib.load(MODELS_DIR / "gbm.joblib"),
+        "RF + MLP (Voting)": joblib.load(MODELS_DIR / "voting.joblib"),
+        "RF + MLP (Stacking)": joblib.load(MODELS_DIR / "stacking.joblib"),
     }
 
 def save(fig, name):
@@ -384,7 +384,7 @@ def _build_sample_grid(clf, y, filenames, pred, rng, n_per_group, landmarker):
 
 def chart_sample_predictions(models_dict, X, y, filenames, n_per_group=4, n_copies=5):
     # Use the best ensemble for the sample display
-    clf  = models_dict["RF + MLP + GBM"]
+    clf  = models_dict["RF + MLP (Stacking)"]
     pred = clf.predict(X)
 
     print(f"  Building {n_copies} randomised prediction sample grids…")

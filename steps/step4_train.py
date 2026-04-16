@@ -174,7 +174,7 @@ def run():
             ("mlp", make_mlp_pipeline()),
         ],
         voting="soft",
-        weights=[1, 2],  #  MLP is now stronger
+        weights=[1, 1.5],  #  MLP is now stronger
     )
 
     stacking = StackingClassifier(

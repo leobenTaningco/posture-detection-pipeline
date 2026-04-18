@@ -1,0 +1,38 @@
+{
+  "rf_feature_importance": {
+    "neck_inclination": 0.1387167764809856,
+    "torso_inclination": 0.04924532056593678,
+    "neck_ratio": 0.09424735262729474,
+    "ear_shoulder_y_diff": 0.1791557627542121,
+    "torso_lean": 0.08455710735782404,
+    "head_forward_angle": 0.08586266371713866,
+    "shoulder_hip_angle": 0.04937569648662733,
+    "neck_torso_ratio": 0.05317452596653646,
+    "ear_hip_x_dist": 0.11083498647190661,
+    "torso_height_ratio": 0.15482980757153772
+  },
+  "mlp_feature_importance": {
+    "neck_inclination": 0.2826180438448566,
+    "torso_inclination": 0.12752529510961214,
+    "neck_ratio": 0.13210845278246203,
+    "ear_shoulder_y_diff": 0.15302381956155142,
+    "torso_lean": 0.13796374367622258,
+    "head_forward_angle": 0.21173956576728492,
+    "shoulder_hip_angle": 0.10527561129848224,
+    "neck_torso_ratio": 0.00024293844856657643,
+    "ear_hip_x_dist": 0.30183336846543,
+    "torso_height_ratio": 0.26118201939291735
+  },
+  "feature_names": [
+    "neck_inclination",
+    "torso_inclination",
+    "neck_ratio",
+    "ear_shoulder_y_diff",
+    "torso_lean",
+    "head_forward_angle",
+    "shoulder_hip_angle",
+    "neck_torso_ratio",
+    "ear_hip_x_dist",
+    "torso_height_ratio"
+  ]
+}

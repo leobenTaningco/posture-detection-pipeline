@@ -22,7 +22,7 @@ options = PoseLandmarkerOptions(
 )
 
 landmarker = PoseLandmarker.create_from_options(options)
-VISIBILITY_THRESHOLD = 0.5
+VISIBILITY_THRESHOLD = 0.3
 
 # ── Geometry helpers ──────────────────────
 
@@ -42,9 +42,9 @@ def three_point_angle(a, b, c):
 # ── Feature extraction ─────────────────────
 
 def extract_features(kp, img_h, img_w):
-    ear = np.array(kp["ear"])
+    ear      = np.array(kp["ear"])
     shoulder = np.array(kp["shoulder"])
-    hip = np.array(kp["hip"])
+    hip      = np.array(kp["hip"])
 
     neck_inc  = find_inclination(*shoulder, *ear)
     torso_inc = find_inclination(*hip, *shoulder)
@@ -67,9 +67,25 @@ def extract_features(kp, img_h, img_w):
 
     return np.array(features).reshape(1, -1)
 
+# ── Keypoint smoothing ────────────────────
+
+ALPHA = 0.4  # lower = smoother, higher = more responsive
+
+def smooth_keypoints(new_kp, old_kp, alpha=ALPHA):
+    """Exponential moving average between new and old keypoints."""
+    if old_kp is None:
+        return new_kp
+    return {
+        k: [
+            alpha * new_kp[k][0] + (1 - alpha) * old_kp[k][0],
+            alpha * new_kp[k][1] + (1 - alpha) * old_kp[k][1],
+        ]
+        for k in new_kp
+    }
+
 # ── Keypoints (SIDE-AWARE) ────────────────
 
-def get_keypoints(image_rgb):
+def get_keypoints(image_rgb, timestamp_ms):
     h, w = image_rgb.shape[:2]
 
     mp_image = mp.Image(
@@ -77,8 +93,7 @@ def get_keypoints(image_rgb):
         data=np.ascontiguousarray(image_rgb)
     )
 
-    timestamp = int(time.time() * 1000)
-    results = landmarker.detect_for_video(mp_image, timestamp)
+    results = landmarker.detect_for_video(mp_image, timestamp_ms)
 
     if not results.pose_landmarks:
         return None
@@ -93,80 +108,98 @@ def get_keypoints(image_rgb):
             "v": lm.visibility
         }
 
-    # LEFT
+    # LEFT side landmarks
     left = {
-        "ear": pt(7),
+        "ear":      pt(7),
         "shoulder": pt(11),
-        "hip": pt(23),
+        "hip":      pt(23),
     }
 
-    # RIGHT
+    # RIGHT side landmarks
     right = {
-        "ear": pt(8),
+        "ear":      pt(8),
         "shoulder": pt(12),
-        "hip": pt(24),
+        "hip":      pt(24),
     }
 
     def score(side):
         return sum(p["v"] for p in side.values())
 
-    left_score = score(left)
-    right_score = score(right)
+    best  = left  if score(left) >= score(right) else right
+    side  = "LEFT" if score(left) >= score(right) else "RIGHT"
 
-    if left_score >= right_score:
-        best = left
-        side = "LEFT"
-    else:
-        best = right
-        side = "RIGHT"
-
-    # reject weak detections
+    # Reject weak detections
     if min(p["v"] for p in best.values()) < VISIBILITY_THRESHOLD:
         return None
 
-    kp = {
-        "ear": [best["ear"]["x"], best["ear"]["y"]],
-        "shoulder": [best["shoulder"]["x"], best["shoulder"]["y"]],
-        "hip": [best["hip"]["x"], best["hip"]["y"]],
-    }
+    kp = {k: [best[k]["x"], best[k]["y"]] for k in ("ear", "shoulder", "hip")}
+    scores = {k: best[k]["v"] for k in ("ear", "shoulder", "hip")}
 
-    return kp, side
+    return kp, side, scores
 
 # ── Drawing ───────────────────────────────
 
 def draw_visuals(frame, kp):
     for name, p in kp.items():
-        cv2.circle(frame, tuple(map(int, p)), 6, (255,255,0), -1)
-        cv2.putText(frame, name, (int(p[0])+5, int(p[1])-5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,0), 1)
+        cv2.circle(frame, tuple(map(int, p)), 6, (255, 255, 0), -1)
+        cv2.putText(frame, name, (int(p[0]) + 5, int(p[1]) - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
     cv2.line(frame, tuple(map(int, kp["ear"])),
-            tuple(map(int, kp["shoulder"])), (255,255,0), 2)
-
+            tuple(map(int, kp["shoulder"])), (255, 255, 0), 2)
     cv2.line(frame, tuple(map(int, kp["shoulder"])),
-            tuple(map(int, kp["hip"])), (0,255,0), 3)
+            tuple(map(int, kp["hip"])), (0, 255, 0), 3)
+
+def draw_overlay(frame, label, color, side, smooth_prob,
+                show_warning, fps, debug=False, stale_counter=0):
+    cv2.putText(frame, f"{label} ({smooth_prob:.2f})",
+                (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+    if side:
+        cv2.putText(frame, f"Side: {side}",
+                    (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    if show_warning:
+        cv2.putText(frame, "!! FIX YOUR POSTURE !!",
+                    (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+    cv2.putText(frame, f"FPS: {int(fps)}",
+                (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    if debug:
+        cv2.putText(frame, f"Stale: {stale_counter}",
+                    (20, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
 # ── Webcam ────────────────────────────────
 
 cap = cv2.VideoCapture(0)
-
-# reduce resolution (performance boost)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-print("🎥 Starting webcam... Press ESC to exit")
+print("Starting webcam... Press ESC to exit | Press D to toggle debug")
 
-prob_history = []
-pred_history = []
-bad_counter = 0
+# ── State ─────────────────────────────────
+prob_history  = []
+pred_history  = []
+bad_counter   = 0
+last_kp       = None
+last_side     = None
+frame_count   = 0
+stale_counter = 0
+MAX_STALE_FRAMES = 5
+current_state = 1           # 1 = good, 0 = bad (hysteresis state)
+prev_gray     = None
+DETECT_EVERY  = 5           # will adapt dynamically
+DETECT_MIN    = 2
+DETECT_MAX    = 8
+debug_mode    = False
 
-last_kp = None
-last_side = None
+# Hysteresis thresholds
+GOOD_THRESHOLD = 0.55
+BAD_THRESHOLD  = 0.42
 
-frame_count = 0
-DETECT_EVERY = 5
-
-prev_time = time.time()
+start_time = time.monotonic()
+prev_time  = time.monotonic()
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -175,53 +208,63 @@ while cap.isOpened():
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h, w = rgb.shape[:2]
-
     frame_count += 1
 
-    # ── Run MediaPipe only every N frames ──
+    # ── Adaptive detection rate based on motion ──
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if prev_gray is not None:
+        motion = cv2.absdiff(gray, prev_gray).mean()
+        DETECT_EVERY = DETECT_MIN if motion > 1.5 else DETECT_MAX
+    prev_gray = gray
+
+    # ── Run MediaPipe every N frames ──
+    timestamp_ms = int((time.monotonic() - start_time) * 1000)
+
     if frame_count % DETECT_EVERY == 0:
-        result = get_keypoints(rgb)
+        result = get_keypoints(rgb, timestamp_ms)
         if result is not None:
-            kp, side = result
-            last_kp = kp
+            raw_kp, side, scores = result
+            kp        = smooth_keypoints(raw_kp, last_kp)
+            last_kp   = kp
             last_side = side
+            stale_counter = 0
         else:
-            kp = last_kp
+            stale_counter += 1
+            kp   = last_kp if stale_counter < MAX_STALE_FRAMES else None
             side = last_side
     else:
-        kp = last_kp
+        kp   = last_kp
         side = last_side
 
-    if kp is not None:
+    # ── Prediction ────────────────────────
+    if kp is not None and stale_counter < MAX_STALE_FRAMES:
         draw_visuals(frame, kp)
 
         features = extract_features(kp, h, w)
-        prob = model.predict_proba(features)[0][1]
+        prob     = model.predict_proba(features)[0][1]
 
-        # ── smoothing ──
+        # Weighted smoothing — recent frames matter more
         prob_history.append(prob)
         if len(prob_history) > 10:
             prob_history.pop(0)
 
-        smooth_prob = np.mean(prob_history)
+        weights     = np.linspace(0.5, 1.0, len(prob_history))
+        smooth_prob = float(np.average(prob_history, weights=weights))
 
-        # neutral zone
-        if 0.45 < smooth_prob < 0.55:
-            pred = None
-        else:
-            pred = 1 if smooth_prob >= 0.5 else 0
+        # Hysteresis — avoid rapid flipping at the boundary
+        if smooth_prob >= GOOD_THRESHOLD:
+            current_state = 1
+        elif smooth_prob <= BAD_THRESHOLD:
+            current_state = 0
+        # else: keep current_state unchanged (dead zone)
 
-        # voting
-        if pred is not None:
-            pred_history.append(pred)
-            if len(pred_history) > 5:
-                pred_history.pop(0)
+        # Voting over recent predictions
+        pred_history.append(current_state)
+        if len(pred_history) > 5:
+            pred_history.pop(0)
+        final_pred = 1 if sum(pred_history) >= 3 else 0
 
-            final_pred = 1 if sum(pred_history) >= 3 else 0
-        else:
-            final_pred = None
-
-        # warning delay
+        # Warning delay
         if final_pred == 0:
             bad_counter += 1
         else:
@@ -229,42 +272,33 @@ while cap.isOpened():
 
         show_warning = bad_counter > 10
 
-        # ── Display ──
-        if final_pred is None:
-            label = "Adjusting..."
-            color = (0,255,255)
-        else:
-            label = "Good Posture" if final_pred == 1 else "Bad Posture"
-            color = (0,255,0) if final_pred == 1 else (0,0,255)
+        label = "Good Posture" if final_pred == 1 else "Bad Posture"
+        color = (0, 255, 0)  if final_pred == 1 else (0, 0, 255)
 
-        cv2.putText(frame, f"{label} ({smooth_prob:.2f})",
-                    (20,40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+    else:
+        smooth_prob  = 0.0
+        show_warning = False
+        label        = "No Detection"
+        color        = (0, 255, 255)
+        side         = last_side
 
-        # show side
-        if side is not None:
-            cv2.putText(frame, f"Side: {side}",
-                        (20,80),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (255,255,255), 2)
-
-        if show_warning:
-            cv2.putText(frame, "⚠ FIX YOUR POSTURE!",
-                        (20,120),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 3)
-
-    # ── FPS ──
-    curr_time = time.time()
-    fps = 1 / (curr_time - prev_time + 1e-6)
+    # ── FPS ───────────────────────────────
+    curr_time = time.monotonic()
+    fps       = 1.0 / (curr_time - prev_time + 1e-6)
     prev_time = curr_time
 
-    cv2.putText(frame, f"FPS: {int(fps)}",
-                (20,160),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+    draw_overlay(frame, label, color, side, smooth_prob,
+                show_warning, fps, debug=debug_mode,
+                stale_counter=stale_counter)
 
     cv2.imshow("Posture Detection", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27:       # ESC — quit
         break
+    elif key == ord('d'):
+        debug_mode = not debug_mode
+        print(f"Debug mode: {'ON' if debug_mode else 'OFF'}")
 
 cap.release()
 cv2.destroyAllWindows()

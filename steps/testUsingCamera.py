@@ -6,7 +6,7 @@ import time
 from math import atan2, degrees, acos
 
 # ── Load model ─────────────────────────────
-model = joblib.load("models/voting.joblib")
+model = joblib.load("models/mlp.joblib")
 
 # ── MediaPipe setup ───────────────────────
 MODEL_PATH = "models/pose_landmarker_lite.task"

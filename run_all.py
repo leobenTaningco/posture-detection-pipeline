@@ -5,8 +5,11 @@ steps = [
     # "steps/step2_extract.py",
     # "steps/step3_dedupe_balance.py",
     # "steps/stepextra.py",
-    "steps/step4_train.py",
-    "steps/step5_analytics.py"
+    # "steps/step4_train.py",
+    # "steps/step5_analytics.py"
+
+    "steps/validationTrain.py",
+    "steps/validationAnalytics.py"
 ]
 
 for step in steps:

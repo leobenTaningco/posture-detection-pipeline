@@ -2,27 +2,30 @@
 
 /* ── Variables ─────────────────────────────────────────────────────────── */
 :root {
-    --bg:      #0b0f14;
-    --panel:   #11161d;
-    --border:  #1f2a36;
-    --accent:  #00e5ff;
-    --good:    #7fff6e;
-    --bad:     #ff4d4d;
-    --text:    #d6e2ef;
-    --muted:   #5b6b7c;
-    --mono:    'Space Mono', monospace;
+    --bg: #0b0f14;
+    --panel: #11161d;
+    --border: #1f2a36;
+    --accent: #00e5ff;
+    --good: #7fff6e;
+    --bad: #ff4d4d;
+    --text: #d6e2ef;
+    --muted: #5b6b7c;
+    --mono: 'Space Mono', monospace;
     --display: 'Syne', sans-serif;
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────── */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────── */
-html, body {
+html,
+body {
     height: 100%;
     overflow: hidden;
 }
@@ -64,7 +67,7 @@ body {
 /* ── Grid ──────────────────────────────────────────────────────────────── */
 .grid {
     flex: 1;
-    min-height: 0;          /* allow flex child to shrink */
+    min-height: 0;
     display: grid;
     grid-template-columns: 260px 1fr;
     gap: 1px;
@@ -119,7 +122,6 @@ body {
     transition: background 0.15s, box-shadow 0.15s;
 }
 
-/* Active (ON) state */
 .toggle-btn[data-active="true"] {
     color: var(--text);
     border-color: var(--accent);
@@ -176,9 +178,17 @@ body {
     margin: 4px 0 8px;
 }
 
-.posture-label.good  { color: var(--good); }
-.posture-label.bad   { color: var(--bad);  }
-.posture-label.none  { color: var(--muted);}
+.posture-label.good {
+    color: var(--good);
+}
+
+.posture-label.bad {
+    color: var(--bad);
+}
+
+.posture-label.none {
+    color: var(--muted);
+}
 
 /* ── Confidence bar ────────────────────────────────────────────────────── */
 .conf-wrap {
@@ -253,7 +263,6 @@ body {
 }
 
 #video {
-    /* fill the available box without overflow */
     max-width: 100%;
     max-height: 100%;
     width: 100%;
@@ -288,14 +297,27 @@ body {
     opacity: 0.3;
 }
 
-/* ── Scrollbar (sidebar) ───────────────────────────────────────────────── */
-.sidebar::-webkit-scrollbar        { width: 4px; }
-.sidebar::-webkit-scrollbar-track  { background: transparent; }
-.sidebar::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 4px; }
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+.sidebar::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
-    html, body { overflow: auto; }
+
+    html,
+    body {
+        overflow: auto;
+    }
 
     .grid {
         grid-template-columns: 1fr;
@@ -306,5 +328,7 @@ body {
         min-height: 40vh;
     }
 
-    .posture-label { font-size: 2rem; }
+    .posture-label {
+        font-size: 2rem;
+    }
 }

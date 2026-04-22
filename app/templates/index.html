@@ -5,8 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Posture</title>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../static/style.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 
 <body>
@@ -24,7 +26,7 @@
             <!-- Controls -->
             <div class="section">
                 <div class="section-label">Controls</div>
-                <button id="btnCamera" onclick="toggleCamera()" class="toggle-btn" data-active="true">
+                <button id="btnCamera" onclick="toggleCamera()" class="toggle-btn" data-active="false">
                     <span class="btn-dot"></span> Camera
                 </button>
                 <button id="btnKP" onclick="toggleKP()" class="toggle-btn" data-active="true">
@@ -109,145 +111,8 @@
 
     </div>
 
-    <script>
-        // ── State ────────────────────────────────────────────────────────
-        let camOn = false;
-        let kpOn = true;
-
-        let goodCount = 0, badCount = 0, totalCount = 0;
-        let goodStreak = 0, badStreak = 0;
-        let lastBadTime = null;
-        let fpsHistory = [];
-        let lastStatTime = performance.now();
-
-        // ── Camera ───────────────────────────────────────────────────────
-        const video   = document.getElementById("video");
-        const overlay = document.getElementById("cameraOffOverlay");
-
-        function startCam() {
-            video.src = "/video_feed?" + Date.now();
-            video.style.display = "block";
-            overlay.style.display = "none";
-        }
-        function stopCam() {
-            video.src = "";
-            video.style.display = "none";
-            overlay.style.display = "flex";
-        }
-
-        function toggleCamera() {
-            fetch("/toggle_camera", { method: "POST" })
-                .then(r => r.json())
-                .then(d => {
-                    camOn = d.camera;
-                    const btn = document.getElementById("btnCamera");
-                    btn.dataset.active = camOn ? "true" : "false";
-                    if (camOn) startCam(); else stopCam();
-                });
-        }
-
-        // ── Keypoints ────────────────────────────────────────────────────
-        function toggleKP() {
-            fetch("/toggle_kp", { method: "POST" })
-                .then(r => r.json())
-                .then(d => {
-                    kpOn = d.draw_kp;
-                    const btn = document.getElementById("btnKP");
-                    btn.dataset.active = kpOn ? "true" : "false";
-                });
-        }
-
-        // ── Model ────────────────────────────────────────────────────────
-        function setModel(el) {
-            document.querySelectorAll(".model-btn").forEach(b => b.classList.remove("active"));
-            el.classList.add("active");
-            fetch("/set_model", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ model: el.dataset.model })
-            });
-        }
-
-        // ── Stats polling ────────────────────────────────────────────────
-        function update(d) {
-            const label    = document.getElementById("label");
-            const fill     = document.getElementById("fill");
-            const confPct  = document.getElementById("confPct");
-            const confVal  = document.getElementById("confVal");
-            const side     = document.getElementById("side");
-
-            // FPS — computed from poll interval
-            const now = performance.now();
-            const delta = (now - lastStatTime) / 1000;
-            lastStatTime = now;
-            fpsHistory.push(1 / delta);
-            if (fpsHistory.length > 10) fpsHistory.shift();
-            const fps = (fpsHistory.reduce((a, b) => a + b, 0) / fpsHistory.length).toFixed(1);
-            document.getElementById("fpsVal").textContent = fps;
-            document.getElementById("fpsBadge").textContent = fps + " FPS";
-
-            // Posture label
-            if (d.status === "good") {
-                label.textContent = "GOOD";
-                label.className = "posture-label good";
-            } else if (d.status === "bad") {
-                label.textContent = "BAD";
-                label.className = "posture-label bad";
-            } else {
-                label.textContent = "—";
-                label.className = "posture-label none";
-            }
-
-            // Confidence bar
-            const pct = Math.round((d.prob || 0) * 100);
-            fill.style.width = pct + "%";
-            fill.style.background = d.status === "bad" ? "#ff4d4d" : "#7fff6e";
-            confPct.textContent = pct + "%";
-            confVal.textContent = pct + "%";
-
-            // Side
-            side.textContent =
-                d.side === "left" ? "LEFT" :
-                d.side === "right" ? "RIGHT" : "—";
-
-            // Session counters
-            if (d.status !== "none") {
-                totalCount++;
-                document.getElementById("detections").textContent = totalCount;
-
-                if (d.status === "good") {
-                    goodCount++;
-                    goodStreak++;
-                    badStreak = 0;
-                } else {
-                    badCount++;
-                    badStreak++;
-                    goodStreak = 0;
-                    lastBadTime = new Date();
-                }
-
-                document.getElementById("goodStreak").textContent = goodStreak + " frames";
-                document.getElementById("badStreak").textContent  = badStreak  + " frames";
-
-                const pctGood = totalCount ? Math.round((goodCount / totalCount) * 100) : 0;
-                document.getElementById("sessionGood").textContent = pctGood + "%";
-
-                document.getElementById("lastCorrection").textContent =
-                    lastBadTime ? lastBadTime.toLocaleTimeString() : "—";
-            }
-        }
-
-        setInterval(() => {
-            fetch("/stats")
-                .then(r => r.json())
-                .then(update)
-                .catch(() => {});
-        }, 500);
-
-        // Start with camera off
-        stopCam();
-        document.getElementById("btnCamera").dataset.active = "false";
-    </script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
 
 </body>
+
 </html>

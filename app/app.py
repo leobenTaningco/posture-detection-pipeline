@@ -9,23 +9,23 @@ import threading
 
 app = Flask(__name__)
 
-# ── Models ─────────────────────────────────────────────
 MODELS = {
-    "mlp":      joblib.load("models/mlp.joblib"),
-    "rf":       joblib.load("models/rf.joblib"),
-    "voting":   joblib.load("models/voting.joblib"),
+    "mlp": joblib.load("models/mlp.joblib"),
+    "rf": joblib.load("models/rf.joblib"),
+    "voting": joblib.load("models/voting.joblib"),
     "stacking": joblib.load("models/stacking.joblib"),
 }
 
 current_model = "mlp"
-
 latest_status = "none"
 latest_prob = 0.0
 latest_side = "none"
+latest_label = "No Detection"
 draw_kp = True
-camera_on = False   # IMPORTANT: start OFF
+camera_on = False
 
-# ── MediaPipe ─────────────────────────────────────────
+bad_since = None
+
 MODEL_PATH = "models/pose_landmarker_lite.task"
 
 BaseOptions = mp.tasks.BaseOptions
@@ -42,22 +42,21 @@ landmarker = PoseLandmarker.create_from_options(options)
 
 VISIBILITY_THRESHOLD = 0.3
 
-# ── Camera state (IMPORTANT FIX) ───────────────────────
 cap = None
 cap_lock = threading.Lock()
 
-# ── Helpers ───────────────────────────────────────────
 def find_inclination(x1, y1, x2, y2):
     return degrees(atan2(abs(x2 - x1), abs(y2 - y1)))
 
 def three_point_angle(a, b, c):
     a, b, c = np.array(a), np.array(b), np.array(c)
     ba, bc = a - b, c - b
-    cos = np.clip(
-        np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6),
-        -1.0, 1.0,
-    )
+    cos = np.clip(np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6), -1.0, 1.0)
     return degrees(acos(cos))
+
+def reset_landmarker():
+    global landmarker
+    landmarker = PoseLandmarker.create_from_options(options)
 
 def extract_features(kp, h, w):
     ear = np.array(kp["ear"])
@@ -82,7 +81,6 @@ def extract_features(kp, h, w):
         (hip[1] - shoulder[1]) / h,
     ]])
 
-# ── Camera control (REAL FIX) ─────────────────────────
 def start_camera():
     global cap
     with cap_lock:
@@ -96,16 +94,12 @@ def stop_camera():
             cap.release()
             cap = None
 
-# ── Frame generator ───────────────────────────────────
 def generate_frames():
-    global latest_status, latest_prob, latest_side
-
-    frame_count = 0
-    start_time = time.monotonic()
+    global latest_status, latest_prob, latest_side, latest_label, bad_since
 
     while True:
-
         if not camera_on:
+            stop_camera()
             time.sleep(0.1)
             continue
 
@@ -120,8 +114,7 @@ def generate_frames():
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w = rgb.shape[:2]
 
-        frame_count += 1
-        timestamp_ms = int((time.monotonic() - start_time) * 1000)
+        timestamp_ms = int(time.time() * 1000)
 
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
@@ -130,26 +123,44 @@ def generate_frames():
 
         results = landmarker.detect_for_video(mp_image, timestamp_ms)
 
-        label = "No Detection"
-        color = (0, 255, 255)
-
         if results.pose_landmarks:
             lms = results.pose_landmarks[0]
 
-            def pt(i):
-                lm = lms[i]
-                return [lm.x * w, lm.y * h, lm.visibility]
+            left_vis = lms[7].visibility + lms[11].visibility + lms[23].visibility
+            right_vis = lms[8].visibility + lms[12].visibility + lms[24].visibility
 
-            kp = {
-                "ear": pt(7),
-                "shoulder": pt(11),
-                "hip": pt(23),
-            }
+            if right_vis >= left_vis:
+                kp = {
+                    "ear": lms[8],
+                    "shoulder": lms[12],
+                    "hip": lms[24],
+                    "nose": lms[0],
+                }
+            else:
+                kp = {
+                    "ear": lms[7],
+                    "shoulder": lms[11],
+                    "hip": lms[23],
+                    "nose": lms[0],
+                }
 
-            if min(p[2] for p in kp.values()) > VISIBILITY_THRESHOLD:
+            def get(lm):
+                return np.array([lm.x * w, lm.y * h, lm.visibility])
 
+            ear = get(kp["ear"])
+            shoulder = get(kp["shoulder"])
+            hip = get(kp["hip"])
+            nose = get(kp["nose"])
+
+            if min([ear[2], shoulder[2], hip[2], nose[2]]) > VISIBILITY_THRESHOLD:
                 features = extract_features(
-                    {k: v[:2] for k, v in kp.items()}, h, w
+                    {
+                        "ear": ear[:2],
+                        "shoulder": shoulder[:2],
+                        "hip": hip[:2],
+                    },
+                    h,
+                    w,
                 )
 
                 model = MODELS[current_model]
@@ -157,21 +168,56 @@ def generate_frames():
 
                 latest_prob = float(prob)
                 latest_status = "good" if prob > 0.5 else "bad"
-                latest_side = "left"
+                latest_label = "GOOD POSTURE" if prob > 0.5 else "BAD POSTURE"
 
-                label = latest_status.upper()
-                color = (0, 255, 0) if latest_status == "good" else (0, 0, 255)
+                if latest_status == "bad":
+                    if bad_since is None:
+                        bad_since = time.time()
+                else:
+                    bad_since = None
 
-        cv2.putText(frame, label, (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                torso_center_x = (shoulder[0] + hip[0]) / 2
+                dx = nose[0] - torso_center_x
+
+                if abs(dx) < 15:
+                    latest_side = "center"
+                elif dx < 0:
+                    latest_side = "left"
+                else:
+                    latest_side = "right"
+            else:
+                latest_status = "none"
+                latest_label = "No Detection"
+                bad_since = None
+
+            if draw_kp:
+                def pt(lm):
+                    return (int(lm.x * w), int(lm.y * h))
+
+                ear_p = pt(kp["ear"])
+                shoulder_p = pt(kp["shoulder"])
+                hip_p = pt(kp["hip"])
+
+                cv2.circle(frame, ear_p, 6, (0, 255, 255), -1)
+                cv2.circle(frame, shoulder_p, 6, (0, 255, 255), -1)
+                cv2.circle(frame, hip_p, 6, (0, 255, 255), -1)
+
+                cv2.line(frame, ear_p, shoulder_p, (0, 255, 255), 2)
+                cv2.line(frame, shoulder_p, hip_p, (0, 255, 255), 2)
+        else:
+            latest_status = "none"
+            latest_label = "No Detection"
+            bad_since = None
+
+        label_color = (127, 255, 110) if latest_status == "good" else (77, 77, 255) if latest_status == "bad" else (0, 255, 255)
+        cv2.putText(frame, latest_label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, label_color, 2)
 
         _, buffer = cv2.imencode(".jpg", frame)
 
         yield (b"--frame\r\n"
-               b"Content-Type: image/jpeg\r\n\r\n" +
-               buffer.tobytes() + b"\r\n")
+            b"Content-Type: image/jpeg\r\n\r\n" +
+            buffer.tobytes() + b"\r\n")
 
-# ── Routes ─────────────────────────────────────────────
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -184,12 +230,11 @@ def video_feed():
 @app.route("/toggle_camera", methods=["POST"])
 def toggle_camera():
     global camera_on
-
     camera_on = not camera_on
-
     if not camera_on:
         stop_camera()
-
+    else:
+        reset_landmarker()
     return jsonify({"camera": camera_on})
 
 @app.route("/toggle_kp", methods=["POST"])
@@ -206,12 +251,13 @@ def set_model():
 
 @app.route("/stats")
 def stats():
+    bad_duration = round(time.time() - bad_since, 1) if bad_since is not None else 0
     return jsonify({
         "status": latest_status,
         "prob": latest_prob,
         "side": latest_side,
+        "bad_duration": bad_duration,
     })
 
-# ── Run ───────────────────────────────────────────────
 if __name__ == "__main__":
     app.run(threaded=True, debug=False)

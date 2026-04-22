@@ -13,6 +13,11 @@
 
 <body>
 
+    <div id="alertBanner">
+        <span class="alert-icon">⚠</span>
+        <span>Fix your posture</span>
+    </div>
+
     <div class="topbar">
         <div class="logo">POSTURE</div>
         <div id="fpsBadge" class="topbar-badge">— FPS</div>
@@ -20,10 +25,8 @@
 
     <div class="grid">
 
-        <!-- LEFT COLUMN -->
         <div class="sidebar">
 
-            <!-- Controls -->
             <div class="section">
                 <div class="section-label">Controls</div>
                 <button id="btnCamera" onclick="toggleCamera()" class="toggle-btn" data-active="false">
@@ -34,7 +37,6 @@
                 </button>
             </div>
 
-            <!-- Model -->
             <div class="section">
                 <div class="section-label">Model</div>
                 <div class="model-grid">
@@ -45,7 +47,6 @@
                 </div>
             </div>
 
-            <!-- Posture status -->
             <div class="section">
                 <div class="section-label">Posture</div>
                 <div class="posture-label none" id="label">—</div>
@@ -61,7 +62,6 @@
                 </div>
             </div>
 
-            <!-- Stats -->
             <div class="section">
                 <div class="section-label">Stats</div>
                 <div class="stat-row">
@@ -71,6 +71,10 @@
                 <div class="stat-row">
                     <span class="stat-key">Confidence</span>
                     <span class="stat-val" id="confVal">—</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-key">Bad duration</span>
+                    <span class="stat-val" id="badDuration">—</span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-key">Good streak</span>
@@ -96,7 +100,6 @@
 
         </div>
 
-        <!-- CAMERA -->
         <div class="cell-camera">
             <div class="camera-wrapper">
                 <img id="video" alt="video feed">

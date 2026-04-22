@@ -1,6 +1,5 @@
-// ── State ──────────────────────────────────────────────────────────────────
-let camOn = false;   // matches data-active="false" on btnCamera in HTML
-let kpOn = true;    // matches data-active="true"  on btnKP in HTML
+let camOn = false;
+let kpOn = true;
 
 let goodCount = 0, badCount = 0, totalCount = 0;
 let goodStreak = 0, badStreak = 0;
@@ -8,11 +7,29 @@ let lastBadTime = null;
 let fpsHistory = [];
 let lastStatTime = performance.now();
 
-// ── DOM refs ───────────────────────────────────────────────────────────────
+let alertActive = false;
+let lastBeepTime = 0;
+const BAD_THRESHOLD_SEC = 10;
+const BEEP_INTERVAL_MS = 3000;
+
 const video = document.getElementById("video");
 const overlay = document.getElementById("cameraOffOverlay");
+const alertBanner = document.getElementById("alertBanner");
 
-// ── Camera helpers ─────────────────────────────────────────────────────────
+function beep() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    oscillator.start(ctx.currentTime);
+    oscillator.stop(ctx.currentTime + 0.4);
+}
+
 function startCam() {
     video.src = "/video_feed?" + Date.now();
     video.style.display = "block";
@@ -25,7 +42,6 @@ function stopCam() {
     overlay.style.display = "flex";
 }
 
-// ── Toggle: Camera ─────────────────────────────────────────────────────────
 function toggleCamera() {
     fetch("/toggle_camera", { method: "POST" })
         .then(r => r.json())
@@ -37,7 +53,6 @@ function toggleCamera() {
         .catch(err => console.error("toggleCamera failed:", err));
 }
 
-// ── Toggle: Keypoints ──────────────────────────────────────────────────────
 function toggleKP() {
     fetch("/toggle_kp", { method: "POST" })
         .then(r => r.json())
@@ -48,7 +63,6 @@ function toggleKP() {
         .catch(err => console.error("toggleKP failed:", err));
 }
 
-// ── Model selector ─────────────────────────────────────────────────────────
 function setModel(el) {
     document.querySelectorAll(".model-btn").forEach(b => b.classList.remove("active"));
     el.classList.add("active");
@@ -59,9 +73,7 @@ function setModel(el) {
     }).catch(err => console.error("setModel failed:", err));
 }
 
-// ── Stats update ───────────────────────────────────────────────────────────
 function update(d) {
-    // FPS — derived from how often /stats actually responds
     const now = performance.now();
     const delta = (now - lastStatTime) / 1000;
     lastStatTime = now;
@@ -75,7 +87,6 @@ function update(d) {
     document.getElementById("fpsVal").textContent = fps;
     document.getElementById("fpsBadge").textContent = fps + " FPS";
 
-    // Posture label
     const label = document.getElementById("label");
     if (d.status === "good") {
         label.textContent = "GOOD";
@@ -88,7 +99,6 @@ function update(d) {
         label.className = "posture-label none";
     }
 
-    // Confidence bar + text
     const pct = Math.round((d.prob || 0) * 100);
     const fill = document.getElementById("fill");
     fill.style.width = pct + "%";
@@ -96,12 +106,31 @@ function update(d) {
     document.getElementById("confPct").textContent = pct + "%";
     document.getElementById("confVal").textContent = pct + "%";
 
-    // Side
     document.getElementById("side").textContent =
         d.side === "left" ? "LEFT" :
             d.side === "right" ? "RIGHT" : "—";
 
-    // Session counters — only tick when a detection exists
+    const badDuration = d.bad_duration || 0;
+    document.getElementById("badDuration").textContent =
+        d.status === "bad" ? badDuration.toFixed(1) + "s" : "—";
+
+    if (d.status === "bad" && badDuration >= BAD_THRESHOLD_SEC) {
+        if (!alertActive) {
+            alertActive = true;
+            alertBanner.classList.add("visible");
+        }
+        const nowMs = Date.now();
+        if (nowMs - lastBeepTime > BEEP_INTERVAL_MS) {
+            beep();
+            lastBeepTime = nowMs;
+        }
+    } else {
+        if (alertActive) {
+            alertActive = false;
+            alertBanner.classList.remove("visible");
+        }
+    }
+
     if (d.status !== "none") {
         totalCount++;
         document.getElementById("detections").textContent = totalCount;
@@ -130,7 +159,6 @@ function update(d) {
     }
 }
 
-// ── Poll /stats every 500ms ────────────────────────────────────────────────
 setInterval(() => {
     fetch("/stats")
         .then(r => r.json())
@@ -138,5 +166,4 @@ setInterval(() => {
         .catch(() => { });
 }, 500);
 
-// ── Init: show camera-off state on load ────────────────────────────────────
 stopCam();
